@@ -1,0 +1,9 @@
+// Simple Jasmin function that increments a value
+// This is a minimal example to demonstrate Jasmin integration
+
+export fn increment_jasmin(reg u32 input) -> reg u32 {
+    reg u32 result;
+    result = input;
+    result += 1;
+    return result;
+}

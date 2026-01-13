@@ -1,0 +1,104 @@
+/* Implement scalar multiplication in key generation of Ecdh25519.
+ * This implementation follows the one in:
+ *     https://cryptojedi.org/peter/teaching/engineering-crypto-software-2025.shtml
+ */
+
+require "ge25519.jazz"
+
+/*******************************************************************************
+ * Name: crypto_scalarmult
+ *
+ * Description: Compute k*p where k is a secret scalar in GL(P) and p is a point
+ *              on Ecdh25519 curve. More specifically:
+ *                  - Alice has a keypair (kA, pA)
+ *                  - Bob has a keypair (kB, pB)
+ *                  - Alice sends pA to Bob
+ *                  - Bob sends pB to Alice
+ *                  - Alice computes shared key as K = kA*pB
+ *                  - Bob computes shared key as K = kB*pA
+ *
+ * Inputs: - uint8_t sk[N]
+ *         - uint8_t pk[N]
+ *
+ * Output: - uint8_t r[N].
+ ******************************************************************************/
+fn crypto_scalarmult(reg ptr u8[N] pr psk ppk) -> reg ptr u8[N] {
+    pr = pr;
+    psk = psk;
+    ppk = ppk;
+
+    #[spill] reg ptr u32[N_P3] pp pu pv;
+    stack u32[N_P3] p u v;
+    #[spill] reg ptr u8[N] pt;
+    stack u8[N] t;
+    #[spill] reg u32 i j;
+    reg u32 ret z;
+
+    pt = t;
+    pt = #copy(psk);
+
+    // "Clamp" the scalar as follows:
+    //     - The secret key is a b-bit string s where b = 255
+    //     - Then the user compute: H(s) = (h_0, ..., h_2*255-1)
+    //     - The secret scalar k is k = 2_b-2 + sum_3^b-3 (2^i*h_i)
+    // This explains that the three LSBs of k are zero and the 253th bit is
+    // always set.
+    // The last three LSBs are zero.
+    z = (32u)pt[0];
+    z &= 248;
+    pt[0] = (8u)z;
+    // The most significant byte is < 128 since the scalar is less than 2^255.
+    z = (32u)pt[N-1];
+    z &= 127;
+    // The 253th bit is always 1.
+    z |= 64;
+    pt[N-1] = (8u)z;
+
+    // Decode the the field element pk into a point in p3 representation
+    // on the twisted Edwards curve.
+    // () = #spill(pr, psk, ppk, pt);
+    pp = p;
+    pp, ret = ge25519_unpack(pp, ppk);
+    // () = #spill(pp);
+
+    if (ret != -1) {
+    }
+
+    pr = pr;
+    return pr;
+}
+
+export
+fn crypto_scalarmult_wrapper(reg ptr u8[N] pr psk ppk) -> reg ptr u8[N] {
+    pr = pr;
+    psk = psk;
+    ppk = ppk;
+    pr = crypto_scalarmult(pr, psk, ppk);
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: crypto_scalarmult_base
+ *
+ * Description: Compute k*B where k is a scalar in GL(P) and B is the base point
+ *              of the Ecdh25519 curve.
+ *
+ * Inputs: - uint8_t sk[N]
+ *
+ * Output: - uint8_t pk[N].
+ ******************************************************************************/
+export
+fn crypto_scalarmult_base(reg ptr u8[N] ppk psk) -> reg ptr u8[N] {
+    reg ptr u8[N] pt;
+    stack u8[N] t;
+
+    pt = t;
+    pt = ge25519_pack(pt, ge25519_base);
+    pt = pt;
+    psk = psk;
+    ppk = ppk;
+    ppk = crypto_scalarmult(ppk, psk, pt);
+    ppk = ppk;
+    return ppk;
+}

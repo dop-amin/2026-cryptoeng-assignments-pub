@@ -1,0 +1,67 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Base box: Ubuntu 22.04 LTS
+  config.vm.box = "ubuntu/jammy64"
+
+  # VM name
+  config.vm.hostname = "cryptoeng-vm"
+
+  # Provider-specific configuration for VirtualBox
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "Cryptographic Engineering VM"
+    vb.memory = "4096"
+    vb.cpus = 2
+
+    # Enable USB controller for Nucleo board
+    vb.customize ["modifyvm", :id, "--usb", "on"]
+    vb.customize ["modifyvm", :id, "--usbehci", "on"]
+
+    # USB filter for STMicroelectronics devices (Nucleo board)
+    # Students may need to adjust these values for their specific board
+    vb.customize ["usbfilter", "add", "0",
+                  "--target", :id,
+                  "--name", "STM32 Nucleo",
+                  "--vendorid", "0x0483"]
+
+    # Enable GUI for easier debugging if needed
+    vb.gui = true
+
+    # Enable clipboard sharing
+    vb.customize ["modifyvm", :id, "--clipboard", "bidirectional"]
+  end
+
+  # Forward SSH port
+  config.vm.network "forwarded_port", guest: 22, host: 2222, id: "ssh"
+
+  # Provisioning script
+  config.vm.provision "shell", path: "provision.sh"
+
+  # Run additional setup as vagrant user
+  config.vm.provision "shell", privileged: false, inline: <<-SHELL
+    echo "Setting up user environment..."
+
+    # Add user to dialout group for serial port access
+    sudo usermod -a -G dialout vagrant
+
+    # Set up bash aliases
+    cat >> ~/.bashrc << 'EOF'
+
+# Cryptographic Engineering Course Aliases
+alias cryptoeng='cd ~/cryptoeng'
+alias assignment0='cd ~/cryptoeng/assignment0-sum'
+alias assignment1='cd ~/cryptoeng/assignment1-chacha20'
+alias assignment2='cd ~/cryptoeng/assignment2-ecdh25519'
+
+# Build shortcuts
+alias build='make clean && make'
+alias flash-board='make flash'
+alias serial='python3 -m serial.tools.miniterm /dev/ttyACM0 38400 --eol LF'
+
+EOF
+
+    echo "VM setup complete!"
+    echo "Please reboot the VM for all changes to take effect: vagrant reload"
+  SHELL
+end

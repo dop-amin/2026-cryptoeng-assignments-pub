@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  common-checks:
+    name: Common - Lint Python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+
+      - name: Lint Python sources
+        run: nix develop --command flake8 .
+
+  assignment0-sum:
+    name: Assignment 0 - Sum
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+
+      - name: Build libopencm3
+        run: nix develop --command make -C assignment0-sum libopencm3
+
+      - name: Build firmware
+        run: nix develop --command make -C assignment0-sum clean all
+
+      - name: Run QEMU tests
+        run: nix develop --command make -C assignment0-sum test-qemu
+
+  assignment1-chacha20:
+    name: Assignment 1 - ChaCha20
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+
+      - name: Build libopencm3
+        run: nix develop --command make -C assignment1-chacha20 libopencm3
+
+      - name: Run Python reference tests
+        run: nix develop --command python3 -m pytest assignment1-chacha20/tests/test_selftest.py -v
+
+      - name: Build firmware
+        run: nix develop --command make -C assignment1-chacha20 clean all
+
+      - name: Run QEMU tests
+        run: nix develop --command make -C assignment1-chacha20 test-qemu
+
+  assignment2-ecdh25519:
+    name: Assignment 2 - Ecdh25519's Scalar Multiplication
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+
+      - name: Build libopencm3
+        run: nix develop --command make -C assignment2-ecdh25519 libopencm3
+
+      - name: Build firmware
+        run: nix develop --command make -C assignment2-ecdh25519 clean all
+
+      - name: Run QEMU tests (constant-time)
+        run: nix develop --command make -C assignment2-ecdh25519 test-qemu
+
+      - name: Run QEMU tests (variable-time)
+        run: nix develop --command make -C assignment2-ecdh25519 CT=no test-qemu

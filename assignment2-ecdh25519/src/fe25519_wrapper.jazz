@@ -1,0 +1,165 @@
+// Export main arithmetic functions for testing
+
+require "fe25519.jazz"
+
+export
+fn fe25519_cmov_wrapper(reg ptr u32[N] pr px, reg u32 b) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_cmov(pr, px, b);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_freeze_wrapper(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+    pr = fe25519_freeze(pr);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_iseq_wrapper(reg ptr u32[N] px py) -> reg u32 {
+    px = px;
+    py = py;
+    reg u32 r;
+    r = fe25519_iseq(px, py);
+    r = r;
+    return r;
+}
+
+export
+fn fe25519_isnegative_wrapper(reg ptr u32[N] px) -> reg u32 {
+    px = px;
+    reg u32 r;
+    r = fe25519_isnegative(px);
+    r = r;
+    return r;
+}
+
+export
+fn fe25519_add_wrapper(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+    pr = fe25519_add(pr, px, py);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_add_rx_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_add_rx(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_double_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_double(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_double_inplace_wrapper(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+    pr = fe25519_double_inplace(pr);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_sub_wrapper(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+    pr = fe25519_sub(pr, px, py);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_sub_rx_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_sub_rx(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_neg_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_neg(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_neg_inplace_wrapper(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+    pr = fe25519_neg_inplace(pr);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_mul_wrapper(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+    pr = fe25519_mul(pr, px, py);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_mul_rx_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_mul_rx(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_square_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_square(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_square_inplace_wrapper(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+    pr = fe25519_square_inplace(pr);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_pow2523_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_pow2523(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_invsqrt_wrapper(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    pr = fe25519_invsqrt(pr, px);
+    pr = pr;
+    return pr;
+}

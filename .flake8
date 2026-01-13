@@ -1,0 +1,10 @@
+[flake8]
+max-line-length = 88
+extend-ignore =
+    E203
+    W503
+exclude =
+    venv,
+    libopencm3
+per-file-ignores =
+    assignment1-chacha20/reference/__init__.py:F401,F403,F821

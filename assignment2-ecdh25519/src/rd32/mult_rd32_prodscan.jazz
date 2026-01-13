@@ -1,0 +1,25 @@
+// Implementation of field multiplication in radix-2^32, meaning a field
+// element is represented as an array of 4 32-bit integers.
+
+param int N_RD32 = 8;
+param int NRD322m1 = 2*N_RD32 - 1;
+
+/*******************************************************************************
+ * Name: fe25519_mul_rd32
+ *
+ * Description: Compute (x * y) mod P using schoolbook method (operand scanning)
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t y[N]
+ *
+ * Output: - uint32_t r[N] = (x * y) mod P.
+ ******************************************************************************/
+export
+fn fe25519_mul_rd32 (reg ptr u32[N_RD32] pr, reg ptr u32[N_RD32] px py) -> reg ptr u32[N_RD32] {
+    pr = pr;
+    px = px;
+    py = py;
+
+    pr = pr;
+    return pr;
+}

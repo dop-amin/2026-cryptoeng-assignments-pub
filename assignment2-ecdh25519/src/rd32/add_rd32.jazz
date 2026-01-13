@@ -1,0 +1,20 @@
+param int N_RD32 = 8;
+
+/*******************************************************************************
+ * Name: fe25519_add_rd32
+ *
+ * Description: Compute (x + y) mod P for x and y in GL(P).
+ *
+ * Inputs: - uint32_t x[N_RD32]
+ *         - uint32_t y[N_RD32]
+ *
+ * Output: - uint32_t r[N_RD32] = x + y mod P.
+ ******************************************************************************/
+fn fe25519_add_rd32(reg ptr u32[N_RD32] pr px py) -> reg ptr u32[N_RD32] {
+    pr = pr;
+    px = px;
+    py = py;
+
+    pr = pr;
+    return pr;
+}

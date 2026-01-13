@@ -1,0 +1,696 @@
+/* Implement group arithmetic on the twisted Edwards curve -x^2 + y^2 = 1 + dx^2y^2, with:
+ *    d = -(121665/121666)
+ *      = 37095705934669439343138083508754565189542113879843219016388785533085940283555
+ *    Base point B = (xB, yB) where
+ *    xB = 15112221349535400772501151409588531511454012693041857206046113283949847762202
+ *    yB = 46316835694926478169428394003475163141307993866256225615783033603165251855960
+ *
+ * Note that d is non-square in GL(P) and (-1) is a square in GL(P).
+ * 
+ * References:
+ * - [Ecdh25519]: https://ed25519.cr.yp.to/ed25519-20110926.pdf
+ * - [TEC]: https://eprint.iacr.org/2008/013.pdf
+ * - [TEC-revisited]: https://iacr.org/archive/asiacrypt2008/53500329/53500329.pdf
+ * 
+ * This implementation follows the one in:
+ *     https://cryptojedi.org/peter/teaching/engineering-crypto-software-2025.shtml
+ */
+
+require "fe25519.jazz"
+
+/* There are three point representations in this implementation:
+ *  - P3(X,Y,Z,T): extended twisted Edwards coordinates.
+ *  - P2(X,Y,Z): projective coordinates.
+ *  - P1P1(X,Y,Z,T): also extended twisted Edwards coordinates, but to represent
+ *    sum of two points in P3 representations, meaning that scaling needs to be
+ *    applied to turn it back to P3 representation (with p1p1_to_p3).
+ */
+param int N_P1P1 = N*4;
+param int N_P3 = N_P1P1;
+param int N_P2 = N*3;
+
+/* d */
+u32[N] ge25519_ecd = {
+    0xA3, 0x78, 0x59, 0x13, 0xCA, 0x4D, 0xEB, 0x75,
+    0xAB, 0xD8, 0x41, 0x41, 0x4D, 0x0A, 0x70, 0x00,
+    0x98, 0xE8, 0x79, 0x77, 0x79, 0x40, 0xC7, 0x8C,
+    0x73, 0xFE, 0x6F, 0x2B, 0xEE, 0x6C, 0x03, 0x52
+};
+
+/* 2*d */
+u32[N] ge25519_ec2d = {
+    0x59, 0xF1, 0xB2, 0x26, 0x94, 0x9B, 0xD6, 0xEB,
+    0x56, 0xB1, 0x83, 0x82, 0x9A, 0x14, 0xE0, 0x00,
+    0x30, 0xD1, 0xF3, 0xEE, 0xF2, 0x80, 0x8E, 0x19,
+    0xE7, 0xFC, 0xDF, 0x56, 0xDC, 0xD9, 0x06, 0x24
+};
+
+/* 1/sqrt(-1-d) */
+u32[N] ge25519_magic = {
+    0x03, 0xBF, 0xA2, 0x7F, 0x55, 0x02, 0x37, 0x66,
+    0x41, 0x8D, 0xBE, 0xA5, 0xE8, 0xE9, 0xD0, 0x62,
+    0xBF, 0x27, 0xFE, 0x01, 0x6E, 0x84, 0x3D, 0xE9,
+    0x5D, 0x03, 0x50, 0x30, 0xFA, 0x76, 0x93, 0x07
+};
+
+/* Base point B of the curve */
+u32[N_P3] ge25519_base = {
+    0x1A, 0xD5, 0x25, 0x8F, 0x60, 0x2D, 0x56, 0xC9,
+    0xB2, 0xA7, 0x25, 0x95, 0x60, 0xC7, 0x2C, 0x69, 
+    0x5C, 0xDC, 0xD6, 0xFD, 0x31, 0xE2, 0xA4, 0xC0,
+    0xFE, 0x53, 0x6E, 0xCD, 0xD3, 0x36, 0x69, 0x21,
+    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xA3, 0xDD, 0xB7, 0xA5, 0xB3, 0x8A, 0xDE, 0x6D,
+    0xF5, 0x52, 0x51, 0x77, 0x80, 0x9F, 0xF0, 0x20,
+    0x7D, 0xE3, 0xAB, 0x64, 0x8E, 0x4E, 0xEA, 0x66,
+    0x65, 0x76, 0x8B, 0xD7, 0x0F, 0x5F, 0x87, 0x67
+};
+
+
+/*******************************************************************************
+ * Name: p1p1_to_p3
+ *
+ * Description: Convert P1P1 point representation to P3 point representation.
+ *
+ * Inputs: - uint32_t p[N_P1P1]
+ *
+ * Output: - uint32_t r[N_P3].
+ ******************************************************************************/
+fn p1p1_to_p3(reg ptr u32[N_P3] pr, reg ptr u32[N_P1P1] pp) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pp = pp;
+
+    reg ptr u32[N] pptmp1 pptmp2;
+    reg ptr u32[N] prtmp;
+
+    prtmp = pr[0:N];
+    pptmp1 = pp[0:N]; // pp.X
+    pptmp2 = pp[3*N:N]; // pp.T
+    prtmp = fe25519_mul(prtmp, pptmp1, pptmp2);
+    pr[0:N] = prtmp;
+
+    prtmp = pr[N:N];
+    pptmp1 = pp[N:N]; // pp.Y
+    pptmp2 = pp[2*N:N]; // pp.Z
+    prtmp = fe25519_mul(prtmp, pptmp1, pptmp2);
+    pr[N:N] = prtmp;
+
+    prtmp = pr[2*N:N];
+    pptmp1 = pp[3*N:N]; // pp.T
+    pptmp2 = pptmp2; // pp.Z
+    prtmp = fe25519_mul(prtmp, pptmp1, pptmp2);
+    pr[2*N:N] = prtmp;
+
+    prtmp = pr[3*N:N];
+    pptmp1 = pp[0:N]; // pp.X
+    pptmp2 = pp[N:N]; // pp.Y
+    prtmp = fe25519_mul(prtmp, pptmp1, pptmp2);
+    pr[3*N:N] = prtmp;
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: add_p1p1
+ *
+ * Description: Compute p + q for p, q are two points on Ecdh25519. The output
+ *              point is in P1P1 representation.
+ *
+ * Inputs: - uint32_t p[N_P3]
+ *         - uint32-t q[N_P3]
+ *
+ * Output: - uint32_t r[N_P1P1].
+ ******************************************************************************/
+fn add_p1p1(reg ptr u32[N_P1P1] pr, reg ptr u32[N_P3] pp pq) -> reg ptr u32[N_P1P1] {
+    pr = pr;
+    pp = pp;
+
+    reg ptr u32[N] pt pu pv ps pz;
+    stack u32[N] t s z;
+
+    () = #spill(pr, pp, pq);
+
+    // A = (Y1 - X1)*(Y2 - X2)
+    pu = pp[N:N]; // pp.Y
+    pv = pp[0:N]; // pp.X
+    pt = t;
+    pt = fe25519_sub(pt, pu, pv); // t = Y1 - X1
+    () = #spill(pt);
+    () = #unspill(pq);
+    pu = pq[N:N]; // pq.Y
+    pv = pq[0:N]; // pq.X
+    ps = s;
+    ps = fe25519_sub(ps, pu, pv); // s = Y2 - X2
+    () = #unspill(pt);
+    ps = ps;
+    pt = fe25519_mul_rx(pt, ps); // t = A
+    () = #spill(pt);
+    // B = (Y1 + X1)*(Y2 + X2)
+    () = #unspill(pp);
+    pu = pp[N:N]; // pp.Y
+    pv = pp[0:N]; // pp.X
+    ps = ps;
+    ps = fe25519_add(ps, pu, pv); // s = Y1 + X1
+    ps = ps;
+    () = #spill(ps);
+    () = #unspill(pq);
+    pu = pq[N:N]; // pq.Y
+    pv = pq[0:N]; // pq.X
+    pz = z;
+    pz = fe25519_add(pz, pu, pv); // z = Y2 + X2
+    () = #unspill(ps);
+    pz = pz;
+    pz = fe25519_mul_rx(pz, ps); // z = B
+    pz = pz;
+    () = #spill(pz);
+    // X3 <-- E = B - A
+    () = #unspill(pr);
+    pv = pr[0:N]; // pr.X
+    () = #unspill(pt);
+    pv = fe25519_sub(pv, pz, pt);
+    pr[0:N] = pv;
+    () = #spill(pr);
+    // Y3 <-- H = B + A
+    pv = pr[N:N]; // pr.Y
+    () = #unspill(pz);
+    pt = pt;
+    pv = fe25519_add(pv, pz, pt);
+    () = #unspill(pr);
+    pr[N:N] = pv;
+    () = #spill(pr);
+
+    // C = d*T1*T2
+    () = #unspill(pp);
+    pu = pp[3*N:N]; // pp.T
+    () = #unspill(pq);
+    pv = pq[3*N:N]; // pq.T
+    pt = pt;
+    pt = fe25519_mul(pt, pu, pv);
+    pt = pt;
+    pt = fe25519_mul_rx(pt, ge25519_ec2d); // t = C
+    () = #spill(pt);
+    // D = 2*Z1*Z2
+    () = #unspill(pp);
+    pu = pp[2*N:N]; // pp.Z
+    () = #unspill(pq);
+    pv = pq[2*N:N]; // pq.Z
+    ps = s;
+    ps = fe25519_mul(ps, pu, pv);
+    ps = ps;
+    ps = fe25519_double_inplace(ps); // s = D
+    // Z3 <-- G = D + C
+    () = #unspill(pt);
+    ps = ps;
+    () = #unspill(pr);
+    pv = pr[2*N:N];
+    pv = fe25519_add(pv, ps, pt);
+    pr[2*N:N] = pv;
+    () = #spill(pr);
+    // T3 <-- F = D - C
+    pv = pr[3*N:N];
+    pt = pt;
+    ps = ps;
+    pv = fe25519_sub(pv, ps, pt);
+    () = #unspill(pr);
+    pr[3*N:N] = pv;
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: double_p1p1
+ *
+ * Description: Compute 2*p for p is a point on Ecdh25519. The output
+ *              point is in P1P1 representation.
+ *
+ * Inputs: - uint32_t p[N_P2]
+ *
+ * Output: - uint32_t r[N_P1P1].
+ ******************************************************************************/
+fn double_p1p1(reg ptr u32[N_P1P1] pr, reg ptr u32[N_P2] pp) -> reg ptr u32[N_P1P1] {
+    pr = pr;
+    pp = pp;
+
+    reg ptr u32[N] ps pt pu pv pz;
+    stack u32[N] s u z;
+
+    // A = X1^2
+    pt = pp[0:N]; // pp.X
+    pz = z;
+    pz = fe25519_square(pz, pt); // z = A
+    pz = pz;
+    () = #spill(pz);
+    // D = -A
+    pu = u;
+    pu = fe25519_neg(pu, pz); // u = D
+    () = #spill(pu);
+    // B = Y1^2
+    pt = pp[N:N]; // pp.Y
+    ps = s;
+    ps = fe25519_square(ps, pt); // s = B
+    ps = ps;
+    () = #spill(ps);
+    // Y3 <-- H = D - B
+    pv = pr[N:N]; // pr.Y
+    () = #unspill(pu);
+    pv = fe25519_sub(pv, pu, ps);
+    pr[N:N] = pv;
+    // Z3 <-- G = D + B
+    pv = pr[2*N:N]; // pr.Z
+    () = #unspill(pu, ps);
+    pv = fe25519_add(pv, pu, ps);
+    pr[2*N:N] = pv;
+    // C = 2 * (Z1^2)
+    pt = pp[2*N:N]; // pp.Z
+    pu = fe25519_square(pu, pt); // u = z1^2
+    pu = pu;
+    pu = fe25519_double_inplace(pu); // u = C
+    // T3 <-- F = G - C
+    pv = pr[3*N:N]; // pr.T
+    pt = pr[2*N:N]; // pr.Z = G
+    pv = fe25519_sub(pv, pt, pu);
+    pr[3*N:N] = pv;
+    // X3 <-- E = (X1 + Y1)^2 - A - B
+    () = #unspill(pz, ps);
+    ps = fe25519_add_rx(ps, pz); // s = A + B
+    () = #spill(ps);
+    pu = pp[0:N]; // pp.X
+    pt = pp[N:N]; // pp.Y
+    pv = pr[0:N]; // pr.X
+    pv = fe25519_add(pv, pu, pt);
+    pv = pv;
+    pv = fe25519_square_inplace(pv);
+    () = #unspill(ps);
+    pv = pv;
+    pv = fe25519_sub_rx(pv, ps);
+    pr[0:N] = pv;
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: ge25519_unpack
+ *
+ * Description: Decode a byte-string into a point on the twisted Edwards curve,
+ *              using Hamburg's "ristretto" approach.
+ *              Appendix A.2 in https://eprint.iacr.org/2015/673.pdf.
+ *              Implementation and comments follows the algorithm defined in:
+ *                  https://ristretto.group/formulas/decoding.html
+ *              with reference to the implementation in:
+ *                  https://cryptojedi.org/peter/teaching/engineering-crypto-software-2025.shtml
+ *
+ * Inputs: - uint8_t x[N]
+ *
+ * Output: - uint32_t r[N_P3].
+ ******************************************************************************/
+fn ge25519_unpack(reg ptr u32[N_P3] pr, reg ptr u8[N] px) -> reg ptr u32[N_P3], reg u32 {
+    pr = pr;
+    px = px;
+
+    reg ptr u32[N] prx pry prz prt;
+    reg ptr u32[N] pisr ps pu1 pu2 pv pt pchk pdx pdy;
+    stack u32[N] isr s u1 u2 v t chk dx dy;
+    reg u32 ret b;
+
+    ps = s;
+    ps = fe25519_unpack(ps, px);
+    // Abort if s is negative.
+    ps = ps;
+    ret = fe25519_isnegative(ps);
+    () = #spill(ret, px, ps);
+
+    // u1 = 1 - s^2; u2 = 1 + s^2.
+    pt = t;
+    pt = fe25519_square(pt, ps);
+    pt = pt;
+    () = #spill(pt);
+    pu1 = u1;
+    pu1 = fe25519_sub(pu1, fe25519_one, pt);
+    () = #spill(pu1);
+    () = #unspill(pt);
+    pu2 = u2;
+    pu2 = fe25519_add(pu2, fe25519_one, pt);
+    () = #spill(pu2);
+
+    // v = -(d*u1^2 - u2^2).
+    () = #unspill(pu1);
+    pv = v;
+    pv = fe25519_square(pv, pu1);
+    pv = pv;
+    pv = fe25519_mul_rx(pv, ge25519_ecd);
+    () = #spill(pv);
+    () = #unspill(pu2);
+    pt = t;
+    pt = fe25519_square(pt, pu2);
+    pt = pt;
+    () = #spill(pt);
+    () = #unspill(pv);
+    pv = fe25519_add_rx(pv, pt);
+    pv = pv;
+    pv = fe25519_neg_inplace(pv);
+    pv = pv;
+    () = #spill(pv);
+
+    // isr = invsqrt(v*u2^2)
+    () = #unspill(pt);
+    pt = fe25519_mul_rx(pt, pv);
+    pt = pt;
+    () = #spill(pt);
+    pisr = isr;
+    pisr = fe25519_invsqrt(pisr, pt);
+    pisr = pisr;
+    () = #spill(pisr);
+
+    // Abort if the square root does not exist.
+    pchk = chk;
+    pchk = fe25519_square(pchk, pisr);
+    () = #unspill(pt);
+    pchk = pchk;
+    pchk = fe25519_mul_rx(pchk, pt);
+    pchk = pchk;
+    b = fe25519_isone(pchk);
+    b = 1 - b;
+    () = #unspill(ret);
+    ret |= b;
+    () = #spill(ret);
+
+    // dx = isr*u2; dy = isr*dx*v.
+    () = #unspill(pu2, pisr);
+    pdx = dx;
+    pdx = fe25519_mul(pdx, pisr, pu2);
+    pisr = pisr;
+    pdx = pdx;
+    () = #spill(pdx);
+    pdy = dy;
+    pdy = fe25519_mul(pdy, pdx, pisr);
+    pdy = pdy;
+    () = #unspill(pv);
+    pdy = fe25519_mul_rx(pdy, pv);
+    () = #spill(pdy);
+
+    // x = |2*s*dx|.
+    () = #unspill(pdx, ps);
+    prx = pr[0:N];
+    prx = fe25519_mul(prx, ps, pdx);
+    prx = prx;
+    prx = fe25519_double_inplace(prx);
+    prx = prx;
+    () = #spill(prx);
+    b = fe25519_isnegative(prx);
+    () = #unspill(prx);
+    pt = t;
+    pt = fe25519_neg(pt, prx);
+    pt = pt;
+    prx = prx;
+    prx = fe25519_cmov(prx, pt, b);
+    () = #spill(prx);
+
+    // y = u1*dy.
+    () = #unspill(pu1, pdy);
+    pry = pr[N:N];
+    pry = fe25519_mul(pry, pu1, pdy);
+    () = #spill(pry);
+
+    // z = 1.
+    b = 1;
+    prz = pr[2*N:N];
+    prz = fe25519_cmov(prz, fe25519_one, b);
+    () = #spill(prz);
+
+    // t = x*y.
+    () = #unspill(prx, pry);
+    prt = pr[3*N:N];
+    prt = fe25519_mul(prt, prx, pry);
+    prt = prt;
+    () = #spill(prt);
+
+    // If t is negative or y == 0, abort.
+    b = fe25519_isnegative(prt);
+    () = #unspill(ret, pry);
+    ret |= b;
+    b = fe25519_iseq(pry, fe25519_zero);
+    ret |= b;
+
+    // Zero all points for invalid input.
+    () = #unspill(prx);
+    prx = fe25519_cmov(prx, fe25519_zero, ret);
+    pr[0:N] = prx;
+    () = #unspill(pry);
+    pry = fe25519_cmov(pry, fe25519_zero, ret);
+    pr[N:N] = pry;
+    () = #unspill(prz);
+    prz = fe25519_cmov(prz, fe25519_zero, ret);
+    pr[2*N:N] = prz;
+    () = #unspill(prt);
+    prt = fe25519_cmov(prt, fe25519_zero, ret);
+    pr[3*N:N] = prt;
+
+    ret = -ret;
+
+    pr = pr;
+    ret = ret;
+    return pr, ret;
+}
+
+/*******************************************************************************
+ * Name: ge25519_pack
+ *
+ * Description: Encode a Ristretto point in extended coordinates to a byte-string,
+ *              using Hamburg's "ristretto" approach.
+ *              Appendix A.1 in https://eprint.iacr.org/2015/673.pdf.
+ *              Implementation and comments follows the algorithm defined in:
+ *                  https://ristretto.group/formulas/decoding.html
+ *              with reference to the implementation in:
+ *                  https://cryptojedi.org/peter/teaching/engineering-crypto-software-2025.shtml
+ *
+ * Inputs: - uint32_t p[N_P3]
+ *
+ * Output: - uint8_t r[N].
+ ******************************************************************************/
+fn ge25519_pack(reg ptr u8[N] pr, reg ptr u32[N_P3] pp) -> reg ptr u8[N] {
+    pr = pr;
+    pp = pp;
+
+    reg ptr u32[N] pd pd1 pd2 pu1 pu2 pisr pzinv pxprime pyprime;
+    stack u32[N] d d1 d2 u1 u2 isr zinv xprime yprime;
+    reg u32 b;
+
+    reg ptr u32[N] ps pt pu;
+    stack u32[N] s t u;
+
+    () = #spill(pr);
+
+    // u1 = (z + y)*(z - y)
+    ps = pp[2*N:N]; // pp.Z
+    pt = pp[N:N]; // pp.Y
+    pu = u;
+    pu = fe25519_add(pu, ps, pt);
+    pt = pt;
+    ps = ps;
+    pu1 = u1;
+    pu1 = fe25519_sub(pu1, ps, pt);
+    pu = pu;
+    pu1 = pu1;
+    pu1 = fe25519_mul_rx(pu1, pu);
+    () = #spill(pu1);
+
+    // u2 = x*y.
+    pu2 = u2;
+    ps = pp[0:N]; // pp.X
+    pt = pp[N:N]; // pp.Y
+    pu2 = fe25519_mul(pu2, ps, pt);
+    pu2 = pu2;
+    () = #spill(pu2);
+
+    // isr = invsqrt(u1*u2^2).
+    pt = t;
+    pt = fe25519_square(pt, pu2);
+    () = #unspill(pu1);
+    pt = pt;
+    pt = fe25519_mul_rx(pt, pu1);
+    pt = pt;
+    pisr = isr;
+    pisr = fe25519_invsqrt(pisr, pt);
+    pisr = pisr;
+    () = #spill(pisr);
+
+    // d1 = u1*isr
+    // d2 = u2*isr
+    () = #unspill(pu1);
+    pd1 = d1;
+    pd1 = fe25519_mul(pd1, pu1, pisr);
+    () = #spill(pd1);
+    () = #unspill(pisr, pu2);
+    pd2 = d2;
+    pd2 = fe25519_mul(pd2, pu2, pisr);
+    pd2 = pd2;
+    () = #spill(pd2);
+
+    // zinv = d1*d2*t.
+    () = #unspill(pd1);
+    pzinv = zinv;
+    pzinv = fe25519_mul(pzinv, pd1, pd2);
+    pzinv = pzinv;
+    pt = pp[3*N:N];
+    pzinv = fe25519_mul_rx(pzinv, pt);
+    pzinv = pzinv;
+    () = #spill(pzinv);
+
+    // If zinv*t0 is negative, do:
+    //     (x', y') = (y*sqrt(-1), x*sqrt(-1))
+    //     d = d1/sqrt(-1 - d)
+    // Otherwise, do:
+    //     (x', y') = (x, y)
+    //     d = d2
+    pt = pp[3*N:N];
+    ps = s;
+    ps = fe25519_mul(ps, pt, pzinv);
+    ps = ps;
+    b = fe25519_isnegative(ps);
+    b = 1 - b;
+    () = #spill(b);
+
+    pxprime = xprime;
+    pt = pp[N:N];
+    pxprime = fe25519_mul(pxprime, pt, fe25519_sqrtm1);
+    () = #spill(pxprime);
+    pyprime = yprime;
+    pt = pp[0:N];
+    pyprime = fe25519_mul(pyprime, pt, fe25519_sqrtm1);
+    () = #spill(pyprime);
+    () = #unspill(pd1);
+    pd = d;
+    pd = fe25519_mul(pd, pd1, ge25519_magic);
+    () = #spill(pd);
+
+    () = #unspill(pxprime, b);
+    pt = pp[0:N];
+    pxprime = fe25519_cmov(pxprime, pt, b);
+    () = #spill(pxprime);
+    () = #unspill(pyprime);
+    pt = pp[N:N];
+    pyprime = fe25519_cmov(pyprime, pt, b);
+    () = #spill(pyprime);
+    () = #unspill(pd, pd2);
+    pd = fe25519_cmov(pd, pd2, b);
+    () = #spill(pd);
+
+    // If x'*zinv is negative, y' = -y'.
+    () = #unspill(pzinv, pxprime);
+    pt = t;
+    pt = fe25519_mul(pt, pxprime, pzinv);
+    pt = pt;
+    b = fe25519_isnegative(pt);
+    pt = pt;
+    () = #unspill(pyprime);
+    pt = fe25519_neg(pt, pyprime);
+    pt = pt;
+    () = #spill(b);
+    pyprime = pyprime;
+    pyprime = fe25519_cmov(pyprime, pt, b);
+    pyprime = pyprime;
+
+    // s = |(z - y)*d|
+    pt = pp[2*N:N]; // pp.Z
+    ps = s;
+    ps = fe25519_sub(ps, pt, pyprime);
+    ps = ps;
+    () = #unspill(pd);
+    ps = fe25519_mul_rx(ps, pd);
+    ps = ps;
+    b = fe25519_isnegative(ps);
+    ps = ps;
+    () = #spill(ps);
+    pt = t;
+    pt = fe25519_neg(pt, ps);
+    () = #unspill(ps);
+    pt = pt;
+    ps = fe25519_cmov(ps, pt, b);
+
+    () = #unspill(pr);
+    pr = fe25519_pack(pr, ps);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: ge25519_add
+ *
+ * Description: Compute p + q for p and q are two points on Ecdh25519. The output
+ *              point is in P3 representation.
+ *
+ * Inputs: - uint32_t p[N_P3]
+ *
+ * Output: - uint32_t r[N_P3].
+ ******************************************************************************/
+fn ge25519_add(reg ptr u32[N_P3] pr pp pq) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pp = pp;
+    pq = pq;
+
+    reg ptr u32[N_P1P1] pt;
+    stack u32[N_P1P1] t;
+
+    pt = t;
+    pt = add_p1p1(pt, pp, pq);
+    pr = pr;
+    pt = pt;
+    pr = p1p1_to_p3(pr, pt);
+
+    pr = pr;
+    return pr;
+}
+
+fn ge25519_add_rp(reg ptr u32[N_P3] pr pp) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pp = pp;
+
+    reg ptr u32[N_P1P1] pt;
+    stack u32[N_P1P1] t;
+
+    pt = t;
+    pt = add_p1p1(pt, pr, pp);
+    pr = pr;
+    pt = pt;
+    pr = p1p1_to_p3(pr, pt);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: ge25519_double
+ *
+ * Description: Compute 2*p for p is a point on Ecdh25519. The output
+ *              point is in P3 representation.
+ *
+ * Inputs: - uint32_t p[N_P3]
+ *
+ * Output: - uint32_t r[N_P3].
+ ******************************************************************************/
+fn ge25519_double_inplace(reg ptr u32[N_P3] pr) -> reg ptr u32[N_P3] {
+    pr = pr;
+
+    reg ptr u32[N_P1P1] pt;
+    stack u32[N_P1P1] t;
+
+    pt = t;
+    pt = double_p1p1(pt, pr[0:N_P2]);
+    pt = pt;
+    pr = pr;
+    pr = p1p1_to_p3(pr, pt);
+
+    pr = pr;
+    return pr;
+}

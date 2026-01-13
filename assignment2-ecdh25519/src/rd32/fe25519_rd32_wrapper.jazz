@@ -1,0 +1,24 @@
+// Export functions from fe25519_rd32.jazz
+
+require "add_rd32.jazz"
+require "mult_rd32.jazz"
+
+export
+fn fe25519_add_rd32_wrapper(reg ptr u32[N_RD32] pr px py) -> reg ptr u32[N_RD32] {
+    pr = pr;
+    px = px;
+    py = py;
+    pr = fe25519_add_rd32(pr, px, py);
+    pr = pr;
+    return pr;
+}
+
+export
+fn fe25519_mul_rd32_wrapper(reg ptr u32[N_RD32] pr px py) -> reg ptr u32[N_RD32] {
+    pr = pr;
+    px = px;
+    py = py;
+    pr = fe25519_mul_rd32(pr, px, py);
+    pr = pr;
+    return pr;
+}

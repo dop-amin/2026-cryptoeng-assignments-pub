@@ -1,0 +1,1199 @@
+// Field arithemetic in GL(P) where P = 2^255 - 19.
+// This implementation follows the C implementation by P. Schwabe in:
+// https://cryptojedi.org/peter/teaching/engineering-crypto-software-2025.shtml
+
+// A field element is represented as an array of 32 32-bit unsigned integers.
+param int N = 32;
+param int N2m1 = 2*N - 1;
+
+u32[N] fe25519_zero = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+u32[N] fe25519_one = {
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+// Square root of -1.
+u32[N] fe25519_sqrtm1 = {
+    0xB0, 0xA0, 0x0E, 0x4A, 0x27, 0x1B, 0xEE, 0xC4,
+    0x78, 0xE4, 0x2F, 0xAD, 0x06, 0x18, 0x43, 0x2F,
+    0xA7, 0xD7, 0xFB, 0x3D, 0x99, 0x00, 0x4D, 0x2B,
+    0x0B, 0xDF, 0xC1, 0x4F, 0x80, 0x24, 0x83, 0x2B
+};
+
+/*******************************************************************************
+ * Name: equal
+ *
+ * Description: Check a == b.
+ *
+ * Inputs: - uint32_t a
+ *         - uint32_t b
+ *
+ * Output: 1 if a == b. Else, 0.
+ ******************************************************************************/
+fn equal(reg u32 a b) -> reg u32 {
+    a = a;
+    b = b;
+
+    reg u32 r;
+    
+    r = a ^ b;
+    r -= 1;
+    r >>= 31;
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: ge (greater or equal)
+ *
+ * Description: Check if a >= b.
+ *
+ * Inputs: - uint32_t a
+ *         - uint32_t b
+ *
+ * Output: 1 if a >= b. Else, 0.
+ ******************************************************************************/
+fn ge(reg u32 a b) -> reg u32 {
+    a = a;
+    b = b;
+
+    reg u32 r;
+    
+    r = a - b;
+    r >>= 31;
+    r ^= 1;
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: reduce_add_sub
+ *
+ * Description: Reduce r mod P, where r is a result of addition.
+ *
+ * Inputs: - uint32_t r[N]
+ *
+ * Output: - uint32_t r[N] = r mod P
+ ******************************************************************************/
+fn reduce_add_sub(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    reg u32 t z;
+    reg u32 i rep;
+
+    // Assume that r = x + y where x and y are field elements represented as
+    // 32-uint32 array. The addition x + y is computed as x[i] + y[i]. This
+    // is obviously does not include carry propagation. Thus, reduce_add_sub
+    // performs the carry propagation and reduce the r mod P all at once.
+
+    // Now, let r = r0 + 2*r1 + 2^2*r2 + ... + 2^254*r254 + 2^255*r255.
+    // After addition of r[N-1] = x[N-1] + y[N-1], r255 can be 1 if there is
+    // carry. We want to compute:
+    // r mod P = (r0 + 2*r1 + 2^2*r2 + ... + 2^254*r254) + (2^255*r255 mod P)(1)
+    // As 2^255 = 19 mod P, (1) is equivalent to:
+    // r mod P = (r0 + 2*r1 + 2^2*r2 + ... + 2^254*r254) + (19*r255 mod P)
+    // And as r255 can either be 1 or 0, 19*r255 = 0 or 19, which is added to
+    // r0.
+    // Now, the carry propagation of r[i] for i=0,N-2 is computed as taking the
+    // carry bit of r[i] and add that to r[i+1]. This is the loop with i.
+    // Since after this propagation, another carry can be introduced in r[N-1],
+    // we need to compute 19*r255 mod P again as shown above, which explains
+    // why rep = 2 in the following code.
+
+    rep = 0;
+    while (rep < 2) {
+        z = pr[N-1];
+        t = z >> 7;
+        z &= 127;
+        pr[N-1] = z;
+        z = 19;
+        t *= z;
+
+        z = pr[0];
+        z += t;
+        pr[0] = z;
+
+        i = 0;
+        while (i < (N-1)) {
+            z = pr[i];
+            t = z >> 8;
+            z &= 255;
+            pr[i] = z;
+
+            z = i + 1;
+            z = pr[z];
+            z += t;
+            t = i + 1;
+            pr[t] = z;
+
+            i += 1;
+        }
+        rep += 1;
+    }
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: reduce_mul
+ *
+ * Description: Reduce r mod P, where r is a result of multiplication.
+ *
+ * Inputs: - uint32_t r[N]
+ *
+ * Output: - uint32_t r[N] = r mod P
+ ******************************************************************************/
+fn reduce_mul(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    reg u32 t z;
+    reg u32 i rep;
+
+    rep = 0;
+    while (rep < 3) {
+        z = pr[N-1];
+        t = z >> 7;
+        z &= 127;
+        pr[N-1] = z;
+        z = 19;
+        t *= z;
+
+        z = pr[0];
+        z += t;
+        pr[0] = z;
+
+        i = 0;
+        while (i < (N-1)) {
+            z = pr[i];
+            t = z >> 8;
+            z &= 255;
+            pr[i] = z;
+
+            z = i + 1;
+            z = pr[z];
+            z += t;
+            t = i + 1;
+            pr[t] = z;
+
+            i += 1;
+        }
+        rep += 1;
+    }
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_freeze
+ *
+ * Description: Reduce r mod P. Assume that r < 2^255.
+ *
+ * Inputs: - uint32_t r[N]
+ *
+ * Output: - uint32_t r[N] = r mod P
+ ******************************************************************************/
+fn fe25519_freeze(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    reg u32 z m t i;
+
+    // Since we have assume that r < 2^255, we check if P = 2^255-19 < r as
+    // follows:
+    //  (1) if r[i] == 255 for i=1,N-2
+    //  (2) if r[N-1] == 127
+    //  (3) if r[0] >= 237
+    // If the three checks above are true, r > P. And we compute r - P as:
+    //  (1) r[i] - 255 for i=1,N-2
+    //  (2) r[N-1] - 127
+    //  (3) r[0] - 237
+
+    // Check if r >= P.
+    z = 127;
+    t = pr[N-1];
+    m = equal(t, z);
+    m = m;
+
+    z = 255;
+    i = 30;
+    while (i > 0) {
+        t = pr[i];
+        t = equal(t, z);
+        m &= t;
+
+        i -= 1;
+    }
+
+    z = 237;
+    t = pr[0];
+    t = ge(t, z);
+    m &= t;
+
+    // If r >= P, m = -1. Else, m = 0.
+    m = -m;
+
+    // Compute r -= P if r >= P.
+    t = m & 127;
+    z = pr[N-1];
+    z -= t;
+    pr[N-1] = z;
+
+    t = (m & 255);
+    i = 30;
+    while (i > 0) {
+        z = pr[i];
+        z -= t;
+        pr[i] = z;
+
+        i -= 1;
+    }
+
+    t = m & 237;
+    z = pr[0];
+    z -= t;
+    pr[0] = z;
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_unpack
+ *
+ * Description: Unpack a byte array to 32-uint32 array.
+ *
+ * Inputs: - uint8_t x[N]
+ *
+ * Output: - uint32_t r[N]
+ ******************************************************************************/
+fn fe25519_unpack(reg ptr u32[N] pr, reg ptr u8[N] px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg u32 t i;
+
+    i = 0;
+    while (i < N) {
+        t = (32u)px[i];
+        pr[i] = t;
+
+        i += 1;
+    }
+    t = pr[N-1];
+    t &= 127;
+    pr[N-1] = t;
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_pack
+ *
+ * Description: Pack a 32-uint32 array to a byte array.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint8_t r[N]
+ ******************************************************************************/
+fn fe25519_pack(reg ptr u8[N] pr, reg ptr u32[N] px) -> reg ptr u8[N] {
+    pr = pr;
+    px = px;
+
+    reg ptr u32[N] py;
+    stack u32[N] y;
+    reg u32 t i;
+
+    py = y;
+    py = #copy(px);
+
+    py = fe25519_freeze(py);
+
+    i = 0;
+    while (i < N) {
+        t = py[i];
+        pr[i] = (8u)t;
+
+        i += 1;
+    }
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_iseq
+ *
+ * Description: Check if two field elements are equal. Assume that they are
+ *              < 2^255.
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t y[N]
+ *
+ * Output: Return 1 if x == y. Else, 0.
+ ******************************************************************************/
+fn fe25519_iseq(reg ptr u32[N] px py) -> reg u32 {
+    px = px;
+    py = py;
+
+    reg ptr u32[N] pt1 pt2;
+    stack u32[N] t1 t2;
+    reg u32 t r z;
+    reg u32 i;
+
+    pt1 = t1;
+    pt1 = #copy(px);
+    pt1 = fe25519_freeze(pt1);
+    () = #spill(pt1);
+
+    pt2 = t2;
+    pt2 = #copy(py);
+    pt2 = fe25519_freeze(pt2);
+    () = #unspill(pt1);
+
+    r = 0;
+    i = 0;
+    while (i < N) {
+        t = pt1[i];
+        z = pt2[i];
+        t = equal(t, z);
+        t = 1 - t;
+        r |= t;
+
+        i += 1;
+    }
+
+    r = 1 - r;
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: fe25519_iszero
+ *
+ * Description: Check if x == 0 mod P for x < 2^255.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: Return 1 if x == 0. Else, 0.
+ ******************************************************************************/
+fn fe25519_iszero(reg ptr u32[N] px) -> reg u32 {
+    px = px;
+
+    reg u32 r;
+    r = fe25519_iseq(px, fe25519_zero);
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: fe25519_isone
+ *
+ * Description: Check if x == 1 mod P, for x < 2^255.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: Return 1 if x == 1. Else, 0.
+ ******************************************************************************/
+fn fe25519_isone(reg ptr u32[N] px) -> reg u32 {
+    px = px;
+
+    reg u32 r;
+    r = fe25519_iseq(px, fe25519_one);
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: fe25519_isnegative
+ *
+ * Description: Check if x has LSB set (negative), for x < 2^255.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: Return 1 if x is negative. Else, 0.
+ ******************************************************************************/
+fn fe25519_isnegative(reg ptr u32[N] px) -> reg u32 {
+    px = px;
+
+    reg ptr u32[N] py;
+    stack u32[N] y;
+    reg u32 r;
+
+    py = y;
+    py = #copy(px);
+
+    py = fe25519_freeze(py);
+
+    r = py[0];
+    r &= 1;
+
+    r = r;
+    return r;
+}
+
+/*******************************************************************************
+ * Name: fe25519_add
+ *
+ * Description: Compute (x + y) mod P for x and y in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t y[N]
+ *
+ * Output: - uint32_t r[N] = x + y mod P.
+ ******************************************************************************/
+fn fe25519_add(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+
+    reg u32 z t i;
+
+    i = 0;
+    while (i < N) {
+        z = px[i];
+        t = py[i];
+        t += z;
+        pr[i] = t;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_add_rx(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg u32 t z i;
+
+    i = 0;
+    while (i < N) {
+        t = px[i];
+        z = pr[i];
+        t += z;
+        pr[i] = t;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_double
+ *
+ * Description: Compute 2*x mod P for x in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint32_t r[N] = 2*x mod P.
+ ******************************************************************************/
+fn fe25519_double(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg u32 t i;
+
+    i = 0;
+    while (i < N) {
+        t = px[i];
+        t += t;
+        pr[i] = t;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_double_inplace(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    reg u32 t i;
+
+    i = 0;
+    while (i < N) {
+        t = pr[i];
+        t += t;
+        pr[i] = t;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_sub
+ * 
+ * Description: Compute (x - y) mod P for x and y in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t y[N]
+ *
+ * Output: - uint32_t r[N] = x - y mod P.
+ ******************************************************************************/
+fn fe25519_sub(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+
+    reg u32 z t i;
+
+    // In order to prevent negative results for each 32-bit limb, which is
+    // intepreted as mod 2^32, we compute the followings:
+    //  + x[i] - y[i] + 510 = (x[i] - y[i]) mod 510
+    //  + x[0] - y[0] + 474 = (x[0] - y[0]) mod 2*237
+    //  + x[N-1] - y[N-1] + 254 = (x[0] - y[0]) mod 2*127
+    // since the sum a + b where a,b <= c should only be maximum 2*c.
+
+    z = px[0];
+    z += 0x1DA;
+    t = py[0];
+    z -= t;
+    pr[0] = z;
+
+    z = px[N-1];
+    z += 0xFE;
+    t = py[N-1];
+    z -= t;
+    pr[N-1] = z;
+
+    i = 1;
+    while (i < (N-1)) {
+        z = px[i];
+        z += 0x1FE;
+        t = py[i];
+        z -= t;
+        pr[i] = z;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_sub_rx(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg u32 z t i;
+
+    // In order to prevent negative results for each 32-bit limb, which is
+    // intepreted as mod 2^32, we compute the followings:
+    //  + x[i] - y[i] + 510 = (x[i] - y[i]) mod 510
+    //  + x[0] - y[0] + 474 = (x[0] - y[0]) mod 2*237
+    //  + x[N-1] - y[N-1] + 254 = (x[0] - y[0]) mod 2*127
+    // since the sum a + b where a,b <= c should only be maximum 2*c.
+
+    z = pr[0];
+    z += 0x1DA;
+    t = px[0];
+    z -= t;
+    pr[0] = z;
+
+    z = pr[N-1];
+    z += 0xFE;
+    t = px[N-1];
+    z -= t;
+    pr[N-1] = z;
+
+    i = 1;
+    while (i < (N-1)) {
+        z = pr[i];
+        z += 0x1FE;
+        t = px[i];
+        z -= t;
+        pr[i] = z;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_neg
+ *
+ * Description: Compute (-x) mod P for x in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint32_t r[N] = -x mod P.
+ ******************************************************************************/
+fn fe25519_neg(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    pr = fe25519_sub(pr, fe25519_zero, px);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_neg_inplace(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    reg u32 z t i;
+
+    // In order to prevent negative results for each 32-bit limb, which is
+    // intepreted as mod 2^32, we compute the followings:
+    //  + x[i] - y[i] + 510 = (x[i] - y[i]) mod 510
+    //  + x[0] - y[0] + 474 = (x[0] - y[0]) mod 2*237
+    //  + x[N-1] - y[N-1] + 254 = (x[0] - y[0]) mod 2*127
+    // since the sum a + b where a,b <= c should only be maximum 2*c.
+
+    z = pr[0];
+    t = 0x1DA;
+    z = t - z;
+    pr[0] = z;
+
+    z = pr[N-1];
+    t = 0xFE;
+    z = t - z;
+    pr[N-1] = z;
+
+    i = 1;
+    t = 0x1FE;
+    while (i < (N-1)) {
+        z = pr[i];
+        z = t - z;
+        pr[i] = z;
+
+        i += 1;
+    }
+    pr = reduce_add_sub(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_mul
+ *
+ * Description: Compute (x * y) mod P for x and y in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t y[N]
+ *
+ * Output: - uint32_t r[N] = x * y mod P.
+ ******************************************************************************/
+fn fe25519_mul(reg ptr u32[N] pr px py) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    py = py;
+
+    stack u32[N2m1] z;
+    reg ptr u32[N2m1] pz = z;
+
+    reg u32 _0 = 0;
+    inline int ii;
+    for ii = 0 to N2m1 { pz[ii] = _0; }
+
+    reg u32 u t i j;
+    i = 0;
+    while (i < N) {
+        j = 0;
+        while (j < N) {
+            u = px[i];
+            t = py[j];
+            u *= t;
+            t = i + j;
+            t = pz[t];
+            u += t;
+            t = i + j;
+            pz[t] = u;
+
+            j += 1;
+        }
+        i += 1;
+    }
+
+    j = 38;
+    for ii = N to N2m1 {
+        t = pz[ii];
+        t *= j;
+        inline int ij = ii - N;
+        u = pz[ij];
+        u += t;
+        pr[ij] = u;
+    }
+    u = pz[N-1];
+    pr[N-1] = u;
+
+    pr = reduce_mul(pr);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_mul_rx(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    stack u32[N2m1] z;
+    reg ptr u32[N2m1] pz = z;
+
+    reg u32 _0 = 0;
+    inline int ii;
+    for ii = 0 to N2m1 { pz[ii] = _0; }
+
+    reg u32 u t i j;
+    i = 0;
+    while (i < N) {
+        j = 0;
+        while (j < N) {
+            u = px[i];
+            t = pr[j];
+            u *= t;
+            t = i + j;
+            t = pz[t];
+            u += t;
+            t = i + j;
+            pz[t] = u;
+
+            j += 1;
+        }
+        i += 1;
+    }
+
+    j = 38;
+    for ii = N to N2m1 {
+        t = pz[ii];
+        t *= j;
+        inline int ij = ii - N;
+        u = pz[ij];
+        u += t;
+        pr[ij] = u;
+    }
+    u = pz[N-1];
+    pr[N-1] = u;
+
+    pr = reduce_mul(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_square
+ *
+ * Description: Compute (x^2) mod P for x in GL(P).
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint32_t r[N] = x^2 mod P.
+ ******************************************************************************/
+fn fe25519_square(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    stack u32[N2m1] z;
+    reg ptr u32[N2m1] pz = z;
+
+    reg u32 _0 = 0;
+    inline int ii;
+    for ii = 0 to N2m1 { pz[ii] = _0; }
+
+    reg u32 u t i j;
+    i = 0;
+    while (i < N) {
+        j = 0;
+        while (j < N) {
+            u = px[i];
+            t = px[j];
+            u *= t;
+            t = i + j;
+            t = pz[t];
+            u += t;
+            t = i + j;
+            pz[t] = u;
+
+            j += 1;
+        }
+        i += 1;
+    }
+
+    j = 38;
+    for ii = N to N2m1 {
+        t = pz[ii];
+        t *= j;
+        inline int ij = ii - N;
+        u = pz[ij];
+        u += t;
+        pr[ij] = u;
+    }
+    u = pz[N-1];
+    pr[N-1] = u;
+
+    pr = reduce_mul(pr);
+
+    pr = pr;
+    return pr;
+}
+
+fn fe25519_square_inplace(reg ptr u32[N] pr) -> reg ptr u32[N] {
+    pr = pr;
+
+    stack u32[N2m1] z;
+    reg ptr u32[N2m1] pz = z;
+
+    reg u32 _0 = 0;
+    inline int ii;
+    for ii = 0 to N2m1 { pz[ii] = _0; }
+
+    reg u32 u t i j;
+    i = 0;
+    while (i < N) {
+        j = 0;
+        while (j < N) {
+            u = pr[i];
+            t = pr[j];
+            u *= t;
+            t = i + j;
+            t = pz[t];
+            u += t;
+            t = i + j;
+            pz[t] = u;
+
+            j += 1;
+        }
+        i += 1;
+    }
+
+    j = 38;
+    for ii = N to N2m1 {
+        t = pz[ii];
+        t *= j;
+        inline int ij = ii - N;
+        u = pz[ij];
+        u += t;
+        pr[ij] = u;
+    }
+    u = pz[N-1];
+    pr[N-1] = u;
+
+    pr = reduce_mul(pr);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_cmov
+ *
+ * Description: Copy x to r if b is set.
+ *
+ * Inputs: - uint32_t x[N]
+ *         - uint32_t b
+ *
+ * Output: - uint32_t r[N] = x if b == 1.
+ ******************************************************************************/
+fn fe25519_cmov(reg ptr u32[N] pr px, reg u32 b) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+    b = b;
+
+    if (b == 1) {
+        pr = #copy(px);
+    }
+
+    pr = pr;
+    return pr;
+}
+
+
+/*******************************************************************************
+ * Name: fe25519_pow2523
+ *
+ * Description: Compute x^(2^252 - 3) mod P.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint32_t r[N] = x^(2^252 - 3) mod P.
+ ******************************************************************************/
+fn fe25519_pow2523(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg ptr u32[N] pt pz py;
+    stack u32[N] t z y;
+    reg u32 i;
+
+    () = #spill(pr);
+    // z = x^2.
+    pz = z;
+    pz = fe25519_square(pz, px);
+    px = px;
+    pz = pz;
+    () = #spill(pz, px);
+    // t = z^2 = x^4.
+    pt = t;
+    pt = fe25519_square(pt, pz);
+    // t = t^2 = x^8.
+    pt = pt;
+    pt = fe25519_square_inplace(pt);
+    // t = t * x = x^9.
+    pt = pt;
+    () = #unspill(px);
+    pt = fe25519_mul_rx(pt, px);
+    pt = pt;
+    () = #spill(pt);
+    // z = z * t = x^11.
+    () = #unspill(pz);
+    pz = fe25519_mul_rx(pz, pt);
+    // z = z^2 = x^22.
+    pz = pz;
+	pz = fe25519_square_inplace(pz);
+    // z = z * t = x^(2^5 - 1).
+    pz = pz;
+    () = #unspill(pt);
+	pz = fe25519_mul_rx(pz, pt);
+    pz = pz;
+    () = #spill(pz);
+
+    /* At this step:
+     *  - z = x^(2^31) can't be changed.
+     *  - y can be changed.
+     *  - t can be changed. */
+
+    // t = z^2 = x^(2*(2^5 - 1)) = x^(2^6 - 2).
+    () = #unspill(pt);
+	pt = fe25519_square(pt, pz);
+    // t = t^16 = x^(2^10 - 2^5).
+    i = 1;
+	while (i < 5) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // y = t * z = x^(2^10 - 2^5) * x^(2^5 - 1) = x^(2^10 - 1).
+    pt = pt;
+    () = #spill(pt);
+    () = #unspill(pz);
+    py = y;
+	py = fe25519_mul(py, pt, pz);
+    py = py;
+    () = #spill(py);
+
+    /* At this step:
+     *  - z can be changed.
+     *  - y = x^(2^10 - 1) can't be changed.
+     *  - t can be changed. */
+
+    // t = y^2 = (x^(2^10 - 1))^2 = x^(2^11 - 2).
+    () = #unspill(pt);
+    pt = fe25519_square(pt, py);
+    // t = t^(2^9) = (x^(2^11 - 2))^(2^9) = x^(2^20 - 2^10).
+    i = 1;
+	while (i < 10) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // pz = t * y = x^(2^20 - 2^10) * x^(2^10 - 1) = x^(2^20 - 1).
+    pt = pt;
+    () = #spill(pt);
+    () = #unspill(pz, py);
+	pz = fe25519_mul(pz, pt, py);
+    pz = pz;
+    () = #spill(pz);
+
+    /* At this step:
+     *  - z = x^(2^20 - 1) can't be changed.
+     *  - y = x^(2^10 - 1) can't be changed.
+     *  - t can be changed. */
+
+    // t = x2_20^2 = (x^(2^20 - 1))^2 = x^(2^21 - 2).
+    () = #unspill(pt);
+    pt = fe25519_square(pt, pz);
+    // t = t^(2^19) = (x^(2^21 - 2))^(2^19) = x^(2^40 - 2^20).
+    i = 1;
+	while (i < 20) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // t = t * z = x^(2^40 - 2^20) * x^(2^20 - 1) = x^(2^40 - 1).
+    pt = pt;
+    () = #unspill(pz);
+	pt = fe25519_mul_rx(pt, pz);
+
+    /* At this step:
+     *  - z can be changed.
+     *  - y = x^(2^10 - 1) can't be changed.
+     *  - t = x^(2^40 - 1) can be changed. */
+
+    // t = z^2 = (x^(2^40 - 1))^2 = x^(2^41 - 2).
+    pt = pt;
+    pt = fe25519_square_inplace(pt);
+    // t = t^(2^9) = (x^(2^41 - 2))^(2^9) = x^(2^50 - 2^10).
+    i = 1;
+	while (i < 10) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // z = t * y = x^(2^50 - 2^10) * x^(2^10 - 1) = x^(2^50 - 1).
+    pt = pt;
+    () = #spill(pt);
+    () = #unspill(pz, py);
+    pz = fe25519_mul(pz, pt, py);
+    pz = pz;
+    () = #spill(pz);
+
+    /* At this step:
+     *  - z = x^(2^50 - 1) can't be changed.
+     *  - y can be changed.
+     *  - t can be changed. */
+
+    // t = z^2 = (x^(2^50 - 1))^2 = x^(2^51 - 2).
+	() = #unspill(pt);
+    pt = fe25519_square(pt, pz);
+    // t = t^(2^49) = (x^(2^51 - 2))^(2^49) = exp(2^100 - 2^50).
+    i = 1;
+	while (i < 50) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // t = t * z = x^(2^100 - 2^50) * x^(2^50 - 1) = x^(2^100 - 1).
+    pt = pt;
+    () = #unspill(pz);
+	pt = fe25519_mul_rx(pt, pz);
+    pt = pt;
+    () = #spill(pt);
+
+    /* At this step:
+     *  - z = x^(2^50 - 1) can't be changed.
+     *  - y can be changed.
+     *  - t = x^(2^100 - 1) can't be changed. */
+
+    // y = (x^(2^100 - 1))^2 = x(2^101 - 2).
+	() = #unspill(py);
+    py = fe25519_square(py, pt);
+    // y = (x^(2^101 - 2))^(2^99) = x^(2^200 - 2^100).
+    i = 1;
+	while (i < 100) { py= py; py = fe25519_square_inplace(py); i += 1; }
+    // t = y * t = x^(2^200 - 2^100) * x^(2^100 - 1) = x^(2^200 - 1).
+    py = py;
+    () = #spill(py);
+    () = #unspill(pt);
+	pt = fe25519_mul_rx(pt, py);
+
+    /* At this step:
+     *  - z = x^(2^50 - 1) can't be changed.
+     *  - y is not needed anymore.
+     *  - t = x^(2^200 - 1) can be changed. */
+
+    // t = (x^(2^200 - 1))^2 = x^(2^201 - 2).
+    pt = pt;
+	pt = fe25519_square_inplace(pt);
+    // t = t^(2^49) = (x^(2^201 - 2))^(2^49) = x^(2^250 - 2^50).
+    i = 1;
+	while (i < 50) { pt = pt; pt = fe25519_square_inplace(pt); i += 1; }
+    // t = t * z = x^(2^250 - 2^50) * x^(2^50 - 1) = x^(2^250 - 1).
+    pt = pt;
+    () = #unspill(pz);
+	pt = fe25519_mul_rx(pt, pz);
+
+    /* At this step:
+     *  - z is not needed anymore.
+     *  - y is not needed anymore.
+     *  - t = x^(2^250 - 1) can be changed. */
+
+    // t = t^2 = (x^(2^250 - 1))^2 = x^(2^251 - 2).
+	pt = pt;
+    pt = fe25519_square_inplace(pt);
+    // t = (x^(2^251 - 2)) = x^(2^252 - 4).
+	pt = pt;
+    pt = fe25519_square_inplace(pt);
+    // r = t * x = x^(2^252 - 4) * x = x^(2^252 - 3).
+    pt = pt;
+    () = #unspill(pr, px);
+	pr = fe25519_mul(pr, pt, px);
+
+    pr = pr;
+    return pr;
+}
+
+/*******************************************************************************
+ * Name: fe25519_invsqrt
+ *
+ * Description: Compute inverse square root of x in GL(P), i.e., find r such
+ *              that r^2 * x = 1 mod P.
+ *
+ * Inputs: - uint32_t x[N]
+ *
+ * Output: - uint32_t r[N] inverse square root of x.
+ ******************************************************************************/
+fn fe25519_invsqrt(reg ptr u32[N] pr px) -> reg ptr u32[N] {
+    pr = pr;
+    px = px;
+
+    reg ptr u32[N] pt ps;
+    stack u32[N] t s;
+    reg u32 b;
+
+    // Compute r = x^7.
+    // r = x^2.
+    pr = fe25519_square(pr, px);
+    pr = pr;
+    px = px;
+    () = #spill(pr, px);
+    // t = x^3.
+    pt = t;
+    pt = fe25519_mul(pt, pr, px);
+    () = #spill(pt);
+    // r = x^4.
+    () = #unspill(pr);
+    pr = fe25519_square_inplace(pr);
+    // r = x^7.
+    pr = pr;
+    () = #unspill(pt);
+    pr = fe25519_mul_rx(pr, pt);
+    pr = pr;
+    () = #spill(pr);
+
+    // Compute r = (x^7)^(2^252 - 3) * x^3.
+    // s = (x^7)^(2^252 - 3).
+    ps = s;
+    ps = fe25519_pow2523(ps, pr);
+    // r = (x^7)^(2^252 - 3) * x^3.
+    () = #unspill(pt, pr);
+    ps = ps;
+    pr = fe25519_mul(pr, ps, pt);
+    pr = pr;
+    () = #spill(pr);
+
+    // Compute t = r^2 * x.
+    () = #unspill(pt);
+    pt = fe25519_square(pt, pr);
+    () = #unspill(px);
+    pt = pt;
+    pt = fe25519_mul_rx(pt, px);
+
+    // Check if t == 1 mod P.
+    pt = pt;
+    b = fe25519_isone(pt);
+    b = 1 - b;
+    () = #spill(b);
+
+    // Compute t = r*sqrt(-1).
+    () = #unspill(pr);
+    pt = pt;
+    pt = fe25519_mul(pt, pr, fe25519_sqrtm1);
+    pt = pt;
+    () = #spill(pt);
+
+    // If b = 1, meaning (r^2*x) != 1, return r*sqrt(-1). Else, return r.
+    () = #unspill(pr, b);
+    pr = fe25519_cmov(pr, pt, b);
+
+    pr = pr;
+    return pr;
+}

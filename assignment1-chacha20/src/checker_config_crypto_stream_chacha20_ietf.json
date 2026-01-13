@@ -1,0 +1,3 @@
+{
+  "input_range": { "ct_len": {"min": "1", "max": "256"} }
+}

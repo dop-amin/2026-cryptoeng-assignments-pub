@@ -1,0 +1,128 @@
+// ChaCha20 Implementation Template
+// Complete the TODOs below to implement ChaCha20
+
+// Performs: a += b; d ^= a; d <<<= 16
+//           c += d; b ^= c; b <<<= 12
+//           a += b; d ^= a; d <<<= 8
+//           c += d; b ^= c; b <<<= 7
+fn quarterround(reg u32 a, reg u32 b, reg u32 c, reg u32 d)
+    -> reg u32, reg u32, reg u32, reg u32 {
+    return a, b, c, d;
+}
+
+// Column round: applies quarterround to all 4 columns
+// Column 0: (0, 4, 8, 12)
+// Column 1: (1, 5, 9, 13)
+// Column 2: (2, 6, 10, 14)
+// Column 3: (3, 7, 11, 15)
+fn column_round(reg ptr u32[16] pstate) -> reg ptr u32[16] {
+    return pstate;
+}
+
+// Diagonal round: applies quarterround to all 4 diagonals
+// Diagonal 0: (0, 5, 10, 15)
+// Diagonal 1: (1, 6, 11, 12)
+// Diagonal 2: (2, 7, 8, 13)
+// Diagonal 3: (3, 4, 9, 14)
+fn diagonal_round(reg ptr u32[16] pstate) -> reg ptr u32[16] {
+    return pstate;
+}
+
+// void chacha20_block(const uint32_t input[16], uint32_t output[16])
+fn chacha20_block(reg ptr u8[64] output_ptr, reg ptr u32[16] input_ptr) -> reg ptr u8[64]{
+    return output_ptr;
+}
+
+fn chacha20_keysetup(reg ptr u32[16] state_ptr, reg ptr u8[32] sk_ptr) -> reg ptr u32[16]{
+    return state_ptr;
+}
+fn chacha20_ietf_ivsetup(reg ptr u32[16] state_ptr, reg ptr u8[12] nonce_ptr) -> reg ptr u32[16]{
+    return state_ptr;
+}
+
+fn chacha20_encrypt_bytes(reg ptr u32[16] state_ptr, reg u32 msg_ptr, reg u32 ct_ptr, reg u32 msg_len) -> reg ptr u32[16]{
+    return state_ptr;
+}
+
+// Export wrapper for quarterround
+// dptr: pointer to 4 consecutive u32 values (a, b, c, d)
+export fn test_quarterround(reg u32 dptr) {
+    reg u32 a b c d;
+    a = [dptr + 0];
+    b = [dptr + 4];
+    c = [dptr + 8];
+    d = [dptr + 12];
+    a, b, c, d = quarterround(a, b, c, d);
+    [dptr + 0] = a;
+    [dptr + 4] = b;
+    [dptr + 8] = c;
+    [dptr + 12] = d;
+}
+
+// Export wrapper for column_round
+// state_ptr: pointer to 16-word (64-byte) state array
+export fn test_column_round(reg ptr u32[16] state_ptr) -> reg ptr u32[16] {
+    state_ptr = state_ptr;
+    state_ptr = column_round(state_ptr);
+    return state_ptr;
+}
+
+// Export wrapper for diagonal_round
+// state_ptr: pointer to 16-word (64-byte) state array
+export fn test_diagonal_round(reg ptr u32[16] state_ptr) -> reg ptr u32[16] {
+    state_ptr = state_ptr;
+    state_ptr = diagonal_round(state_ptr);
+    return state_ptr;
+}
+
+// Export wrapper for chacha20_block
+// output_ptr: pointer to 64-byte output buffer
+// input_ptr: pointer to 16-word (64-byte) input state array
+export fn test_chacha20_block(reg ptr u8[64] output_ptr, reg ptr u32[16] input_ptr) -> reg ptr u8[64]{
+    output_ptr = output_ptr;
+    input_ptr = input_ptr;
+    output_ptr = chacha20_block(output_ptr, input_ptr);
+    return output_ptr;
+}
+
+// Export wrapper for chacha20_keysetup
+// state_ptr: pointer to 16-word (64-byte) state array
+// key_ptr: pointer to 32-byte key
+export fn test_chacha20_keysetup(reg ptr u32[16] state_ptr, reg ptr u8[32] key_ptr) -> reg ptr u32[16] {
+    state_ptr = state_ptr;
+    key_ptr = key_ptr;
+    state_ptr = chacha20_keysetup(state_ptr, key_ptr);
+    return state_ptr;
+}
+
+// Export wrapper for chacha20_ietf_ivsetup
+// state_ptr: pointer to 16-word (64-byte) state array
+// nonce_ptr: pointer to 12-byte nonce
+export fn test_chacha20_ietf_ivsetup(reg ptr u32[16] state_ptr, reg ptr u8[12] nonce_ptr) -> reg ptr u32[16] {
+    state_ptr = state_ptr;
+    nonce_ptr = nonce_ptr;
+    state_ptr = chacha20_ietf_ivsetup(state_ptr, nonce_ptr);
+    return state_ptr;
+}
+
+// Export wrapper for chacha20_encrypt_bytes
+// state_ptr: pointer to 16-word (64-byte) state array
+// msg_ptr: pointer to message (unused in current implementation)
+// ct_ptr: pointer to output ciphertext/keystream buffer
+// msg_len: length of message in bytes
+export fn test_chacha20_encrypt_bytes(reg ptr u32[16] state_ptr, reg u32 msg_ptr, reg u32 ct_ptr, reg u32 msg_len) -> reg ptr u32[16] {
+    state_ptr = state_ptr;
+    msg_ptr = msg_ptr;
+    ct_ptr = ct_ptr;
+    msg_len = msg_len;
+    state_ptr = chacha20_encrypt_bytes(state_ptr, msg_ptr, ct_ptr, msg_len);
+    return state_ptr;
+}
+
+// Export wrapper for crypto_stream_chacha20_ietf (highest-level API)
+// ct_ptr: pointer to output ciphertext/keystream buffer
+// nonce_ptr: pointer to 12-byte nonce
+// sk_ptr: pointer to 32-byte secret key
+// ct_len: length of output in bytes
+export fn crypto_stream_chacha20_ietf(reg u32 ct_ptr, reg ptr u8[12] nonce_ptr, reg ptr u8[32] sk_ptr, reg u32 ct_len){
+}

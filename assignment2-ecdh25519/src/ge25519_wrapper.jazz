@@ -1,0 +1,47 @@
+require "ge25519.jazz"
+
+export
+fn ge25519_unpack_wrapper(reg ptr u32[N_P3] pr, reg ptr u8[N] px) -> reg ptr u32[N_P3] {
+    pr = pr;
+    px = px;
+    reg u32 ret;
+    pr, ret = ge25519_unpack(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn ge25519_pack_wrapper(reg ptr u8[N] pr, reg ptr u32[N_P3] px) -> reg ptr u8[N] {
+    pr = pr;
+    px = px;
+    pr = ge25519_pack(pr, px);
+    pr = pr;
+    return pr;
+}
+
+export
+fn ge25519_add_wrapper(reg ptr u32[N_P3] pr pp pq) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pp = pp;
+    pq = pq;
+    pr = ge25519_add(pr, pp, pq);
+    pr = pr;
+    return pr;
+}
+
+export
+fn ge25519_add_rp_wrapper(reg ptr u32[N_P3] pr pp) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pp = pp;
+    pr = ge25519_add_rp(pr, pp);
+    pr = pr;
+    return pr;
+}
+
+export
+fn ge25519_double_inplace_wrapper(reg ptr u32[N_P3] pr) -> reg ptr u32[N_P3] {
+    pr = pr;
+    pr = ge25519_double_inplace(pr);
+    pr = pr;
+    return pr;
+}
